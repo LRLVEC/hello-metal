@@ -30,6 +30,7 @@ target_include_directories(hello-metal PUBLIC
 	"dependencies/glfw/include"
 	"dependencies/metal-cpp/include"
 )
+target_compile_definitions(hello-metal PUBLIC IMGUI_IMPL_METAL_CPP)
 target_link_libraries(hello-metal glfw)
 set_target_properties(hello-metal PROPERTIES
     LINK_FLAGS "-ObjC"
