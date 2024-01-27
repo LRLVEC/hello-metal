@@ -4,3 +4,6 @@
 [submodule "dependencies/glfw"]
 	path = dependencies/glfw
 	url = https://github.com/LRLVEC/glfw.git
+[submodule "dependencies/imgui"]
+	path = dependencies/imgui
+	url = https://github.com/LRLVEC/imgui.git

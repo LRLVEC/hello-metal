@@ -7,16 +7,26 @@ add_subdirectory(dependencies/glfw)
 
 
 add_executable(hello-metal 
-    src/metal.mm
-    src/hello-metal.cpp
+    "src/metal.mm"
+    "src/hello-metal.cpp"
+    # imgui
+    "dependencies/imgui/imgui.cpp"
+    "dependencies/imgui/backends/imgui_impl_glfw.cpp"
+    "dependencies/imgui/backends/imgui_impl_metal.mm"
+    "dependencies/imgui/imgui_draw.cpp"
+    "dependencies/imgui/imgui_tables.cpp"
+    "dependencies/imgui/imgui_widgets.cpp"
 )
 target_link_libraries(hello-metal
     "-framework AppKit"
     "-framework QuartzCore"
     "-framework Metal"
+    "-framework GameController"
 )
 target_include_directories(hello-metal PUBLIC
     "include"
+    "dependencies"
+    "dependencies/imgui"
 	"dependencies/glfw/include"
 	"dependencies/metal-cpp/include"
 )
