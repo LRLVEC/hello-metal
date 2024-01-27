@@ -4,6 +4,7 @@
 #include <GLFW/glfw3native.h>
 #include <Foundation/Foundation.hpp>
 #include <Metal/Metal.hpp>
+#include <Metal/MTLResource.hpp>
 
 #include <QuartzCore/QuartzCore.hpp>
 
@@ -29,7 +30,7 @@ static void resize(GLFWwindow* window, int width, int height)
     swapchain->setDrawableSize(CGSize{ (double)width, (double)height });
 }
 
-void create_shader(MTL::Device* device)
+MTL::Library* create_shader(MTL::Device* device)
 {
     const char* shaderSrc = R"(
         #include <metal_stdlib>
@@ -38,52 +39,67 @@ void create_shader(MTL::Device* device)
         struct v2f
         {
             float4 position [[position]];
-            half3 color;
         };
 
-        v2f vertex vertexMain( uint vertexId [[vertex_id]],
-                               device const float3* positions [[buffer(0)]],
-                               device const float3* colors [[buffer(1)]] )
+        v2f vertex vertexMain(uint vertexId [[vertex_id]], device const float2* positions [[buffer(0)]])
         {
             v2f o;
-            o.position = float4( positions[ vertexId ], 1.0 );
-            o.color = half3 ( colors[ vertexId ] );
+            o.position = float4( positions[ vertexId ], 0.0, 1.0 );
             return o;
         }
 
-        half4 fragment fragmentMain( v2f in [[stage_in]] )
+        half4 fragment fragmentMain(v2f in [[stage_in]])
         {
-            return half4( in.color, 1.0 );
+            return half4(0.0, 1.0, 0.0, 1.0);
         }
     )";
 
-    NS::Error* pError = nullptr;
-    MTL::Library* pLibrary = device->newLibrary(NS::String::string(shaderSrc, NS::StringEncoding::UTF8StringEncoding), nullptr, &pError);
-    if (!pLibrary)
+    NS::Error* error = nullptr;
+    MTL::Library* library = device->newLibrary(NS::String::string(shaderSrc, NS::StringEncoding::UTF8StringEncoding), nullptr, &error);
+    if (!library)
     {
-        printf("%s", pError->localizedDescription()->utf8String());
-        assert(false);
+        printf("%s", error->localizedDescription()->utf8String());
+        return nullptr;
     }
+    return library;
+}
 
-    MTL::Function* pVertexFn = pLibrary->newFunction(NS::String::string("vertexMain", NS::StringEncoding::UTF8StringEncoding));
-    MTL::Function* pFragFn = pLibrary->newFunction(NS::String::string("fragmentMain", NS::StringEncoding::UTF8StringEncoding));
+MTL::RenderPipelineState* create_pipeline(MTL::Device* device, MTL::Library* library)
+{
+    MTL::Function* vertex_fn = library->newFunction(NS::String::string("vertexMain", NS::StringEncoding::UTF8StringEncoding));
+    MTL::Function* frag_fn = library->newFunction(NS::String::string("fragmentMain", NS::StringEncoding::UTF8StringEncoding));
 
-    MTL::RenderPipelineDescriptor* pDesc = MTL::RenderPipelineDescriptor::alloc()->init();
-    pDesc->setVertexFunction(pVertexFn);
-    pDesc->setFragmentFunction(pFragFn);
-    pDesc->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormat::PixelFormatBGRA8Unorm_sRGB);
+    MTL::RenderPipelineDescriptor* desc = MTL::RenderPipelineDescriptor::alloc()->init();
+    desc->setVertexFunction(vertex_fn);
+    desc->setFragmentFunction(frag_fn);
+    desc->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormat::PixelFormatBGRA8Unorm_sRGB);
 
-    MTL::RenderPipelineState* _pPSO = device->newRenderPipelineState(pDesc, &pError);
-    if (!_pPSO)
+    NS::Error* error = nullptr;
+    MTL::RenderPipelineState* pipeline = device->newRenderPipelineState(desc, &error);
+    vertex_fn->release();
+    frag_fn->release();
+    desc->release();
+    if (!pipeline)
     {
-        printf("%s", pError->localizedDescription()->utf8String());
-        assert(false);
+        printf("%s", error->localizedDescription()->utf8String());
+        return nullptr;
     }
+    return pipeline;
+}
 
-    pVertexFn->release();
-    pFragFn->release();
-    pDesc->release();
-    pLibrary->release();
+MTL::Buffer* create_buffer(MTL::Device* device)
+{
+    float positions[][2] =
+    {
+        { -0.8f,  -0.8f },
+        {  0.0f,   0.8f },
+        {  0.8f, - 0.8f }
+    };
+    MTL::Buffer* vertex_pos_buffer = device->newBuffer(sizeof(positions), MTL::ResourceStorageModeManaged);
+    printf("%ld\n", vertex_pos_buffer->length());
+    memcpy(vertex_pos_buffer->contents(), positions, sizeof(positions));
+    vertex_pos_buffer->didModifyRange(NS::Range::Make(0, vertex_pos_buffer->length()));
+    return vertex_pos_buffer;
 }
 
 int main(void)
@@ -98,14 +114,14 @@ int main(void)
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     GLFWwindow* window = glfwCreateWindow(640, 480, "GLFW Metal", NULL, NULL);
 
-    MTL::Device* gpu = MTL::CreateSystemDefaultDevice();
-    MTL::CommandQueue* queue = gpu->newCommandQueue();
+    MTL::Device* device = MTL::CreateSystemDefaultDevice();
+    MTL::CommandQueue* queue = device->newCommandQueue();
     swapchain = (CA::MetalLayer*)glfwGetCocoaMetalLayer(window);
-    swapchain->setDevice(gpu);
+    swapchain->setDevice(device);
     // swapchain->opaque = true;
 
     ImGui_ImplGlfw_InitForOther(window, true);
-    ImGui_ImplMetal_Init(gpu);
+    ImGui_ImplMetal_Init(device);
 
     glfwSetKeyCallback(window, quit);
     glfwSetFramebufferSizeCallback(window, resize);
@@ -113,6 +129,12 @@ int main(void)
 
     // Setup style
     ImGui::StyleColorsDark();
+
+    MTL::Library* library = create_shader(device);
+    MTL::RenderPipelineState* pipeline = create_pipeline(device, library);
+    library->release();
+
+    MTL::Buffer* vertex_pos_buffer = create_buffer(device);
 
     while (!glfwWindowShouldClose(window))
     {
@@ -126,23 +148,24 @@ int main(void)
         pass->colorAttachments()->object(0)->setStoreAction(MTL::StoreActionStore);
         pass->colorAttachments()->object(0)->setTexture(surface->texture());
 
-
+        // draw triangle
         MTL::CommandBuffer* buffer = queue->commandBuffer();
         MTL::RenderCommandEncoder* encoder = buffer->renderCommandEncoder(pass);
-        NS::String* ahh = NS::String::alloc()->init("ImGui demo", NS::StringEncoding::UTF8StringEncoding);
-        encoder->pushDebugGroup(ahh);
+        encoder->setRenderPipelineState(pipeline);
+        encoder->setVertexBuffer(vertex_pos_buffer, 0, 0);
+        encoder->drawPrimitives(MTL::PrimitiveType::PrimitiveTypeTriangle, NS::UInteger(0), NS::UInteger(3));
 
         // Start the Dear ImGui frame
+        // encoder->pushDebugGroup(NS::String::string("ImGui demo", NS::StringEncoding::UTF8StringEncoding));
         ImGui_ImplMetal_NewFrame(pass);
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
         ImGui::Begin("hello-metal");
         ImGui::End();
         ImGui::Render();
-
         ImGui_ImplMetal_RenderDrawData(ImGui::GetDrawData(), buffer, encoder);
+        // encoder->popDebugGroup();
 
-        encoder->popDebugGroup();
         encoder->endEncoding();
         buffer->presentDrawable(surface);
         buffer->commit();
@@ -153,11 +176,13 @@ int main(void)
         buffer->release();
     }
 
+    vertex_pos_buffer->release();
+    pipeline->release();
+    queue->release();
+    device->release();
+
     glfwDestroyWindow(window);
     glfwTerminate();
-
-    queue->release();
-    gpu->release();
 
     return 0;
 }
