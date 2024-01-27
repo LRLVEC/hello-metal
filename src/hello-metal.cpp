@@ -41,6 +41,15 @@ MTL::Library* create_shader(MTL::Device* device)
             float4 position [[position]];
         };
 
+        kernel void update_vert(constant float &size [[ buffer(0) ]],
+                                device const float2* buffer_in [[ buffer(1) ]],
+                                device float2* buffer_out [[ buffer(2) ]],
+                                uint tid [[thread_index_in_threadgroup]],
+                                uint3 bid [[threadgroup_position_in_grid]])
+        {
+            buffer_out[tid] = size * buffer_in[tid];
+        }
+
         v2f vertex vertexMain(uint vertexId [[vertex_id]], device const float2* positions [[buffer(0)]])
         {
             v2f o;
@@ -64,7 +73,7 @@ MTL::Library* create_shader(MTL::Device* device)
     return library;
 }
 
-MTL::RenderPipelineState* create_pipeline(MTL::Device* device, MTL::Library* library)
+MTL::RenderPipelineState* create_render_pipeline(MTL::Device* device, MTL::Library* library)
 {
     MTL::Function* vertex_fn = library->newFunction(NS::String::string("vertexMain", NS::StringEncoding::UTF8StringEncoding));
     MTL::Function* frag_fn = library->newFunction(NS::String::string("fragmentMain", NS::StringEncoding::UTF8StringEncoding));
@@ -75,16 +84,31 @@ MTL::RenderPipelineState* create_pipeline(MTL::Device* device, MTL::Library* lib
     desc->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormat::PixelFormatBGRA8Unorm_sRGB);
 
     NS::Error* error = nullptr;
-    MTL::RenderPipelineState* pipeline = device->newRenderPipelineState(desc, &error);
+    MTL::RenderPipelineState* render_pipeline = device->newRenderPipelineState(desc, &error);
     vertex_fn->release();
     frag_fn->release();
     desc->release();
-    if (!pipeline)
+    if (!render_pipeline)
     {
         printf("%s", error->localizedDescription()->utf8String());
         return nullptr;
     }
-    return pipeline;
+    return render_pipeline;
+}
+
+MTL::ComputePipelineState* create_compute_pipeline(MTL::Device* device, MTL::Library* library)
+{
+    NS::Error* error = nullptr;
+
+    MTL::Function* update_fn = library->newFunction(NS::String::string("update_vert", NS::UTF8StringEncoding));
+    MTL::ComputePipelineState* compute_pipeline = device->newComputePipelineState(update_fn, &error);
+    update_fn->release();
+    if (!compute_pipeline)
+    {
+        printf("%s", error->localizedDescription()->utf8String());
+        return nullptr;
+    }
+    return compute_pipeline;
 }
 
 MTL::Buffer* create_buffer(MTL::Device* device)
@@ -93,7 +117,7 @@ MTL::Buffer* create_buffer(MTL::Device* device)
     {
         { -0.8f,  -0.8f },
         {  0.0f,   0.8f },
-        {  0.8f, - 0.8f }
+        {  0.8f, -0.8f }
     };
     MTL::Buffer* vertex_pos_buffer = device->newBuffer(sizeof(positions), MTL::ResourceStorageModeManaged);
     printf("%ld\n", vertex_pos_buffer->length());
@@ -131,10 +155,12 @@ int main(void)
     ImGui::StyleColorsDark();
 
     MTL::Library* library = create_shader(device);
-    MTL::RenderPipelineState* pipeline = create_pipeline(device, library);
+    MTL::RenderPipelineState* render_pipeline = create_render_pipeline(device, library);
+    MTL::ComputePipelineState* compute_pipeline = create_compute_pipeline(device, library);
     library->release();
 
     MTL::Buffer* vertex_pos_buffer = create_buffer(device);
+    MTL::Buffer* vertex_pos_buffer_render = create_buffer(device);
 
     while (!glfwWindowShouldClose(window))
     {
@@ -148,12 +174,26 @@ int main(void)
         pass->colorAttachments()->object(0)->setStoreAction(MTL::StoreActionStore);
         pass->colorAttachments()->object(0)->setTexture(surface->texture());
 
-        // draw triangle
-        MTL::CommandBuffer* buffer = queue->commandBuffer();
-        MTL::RenderCommandEncoder* encoder = buffer->renderCommandEncoder(pass);
-        encoder->setRenderPipelineState(pipeline);
-        encoder->setVertexBuffer(vertex_pos_buffer, 0, 0);
-        encoder->drawPrimitives(MTL::PrimitiveType::PrimitiveTypeTriangle, NS::UInteger(0), NS::UInteger(3));
+        MTL::CommandBuffer* cmd_buffer = queue->commandBuffer();
+
+        // compute
+        // NS::UInteger threadGroupSize = compute_pipeline->maxTotalThreadsPerThreadgroup();
+        MTL::ComputeCommandEncoder* compute_encoder = cmd_buffer->computeCommandEncoder();
+        MTL::Size gridSize = MTL::Size(1, 1, 1);
+        MTL::Size blockSize(3, 1, 1);
+        float s = color.red;
+        compute_encoder->setComputePipelineState(compute_pipeline);
+        compute_encoder->setBytes(&s, sizeof(float), 0);
+        compute_encoder->setBuffer(vertex_pos_buffer, 0, 1);
+        compute_encoder->setBuffer(vertex_pos_buffer_render, 0, 2);
+        compute_encoder->dispatchThreadgroups(gridSize, blockSize); // grid size, block size
+        compute_encoder->endEncoding();
+
+        // render
+        MTL::RenderCommandEncoder* render_encoder = cmd_buffer->renderCommandEncoder(pass);
+        render_encoder->setRenderPipelineState(render_pipeline);
+        render_encoder->setVertexBuffer(vertex_pos_buffer_render, 0, 0);
+        render_encoder->drawPrimitives(MTL::PrimitiveType::PrimitiveTypeTriangle, NS::UInteger(0), NS::UInteger(3));
 
         // Start the Dear ImGui frame
         // encoder->pushDebugGroup(NS::String::string("ImGui demo", NS::StringEncoding::UTF8StringEncoding));
@@ -163,21 +203,23 @@ int main(void)
         ImGui::Begin("hello-metal");
         ImGui::End();
         ImGui::Render();
-        ImGui_ImplMetal_RenderDrawData(ImGui::GetDrawData(), buffer, encoder);
+        ImGui_ImplMetal_RenderDrawData(ImGui::GetDrawData(), cmd_buffer, render_encoder);
         // encoder->popDebugGroup();
 
-        encoder->endEncoding();
-        buffer->presentDrawable(surface);
-        buffer->commit();
+        render_encoder->endEncoding();
+        cmd_buffer->presentDrawable(surface);
+        cmd_buffer->commit();
 
         surface->release();
         pass->release();
-        encoder->release();
-        buffer->release();
+        compute_encoder->release();
+        render_encoder->release();
+        cmd_buffer->release();
     }
 
     vertex_pos_buffer->release();
-    pipeline->release();
+    vertex_pos_buffer_render->release();
+    render_pipeline->release();
     queue->release();
     device->release();
 
