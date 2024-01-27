@@ -1,3 +1,6 @@
+[submodule "dependencies/metal-cpp"]
+	path = dependencies/metal-cpp
+	url = https://github.com/LRLVEC/metal-cpp.git
 [submodule "dependencies/glfw"]
 	path = dependencies/glfw
-	url = https://github.com/glfw/glfw.git
+	url = https://github.com/LRLVEC/glfw.git
