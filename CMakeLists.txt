@@ -5,6 +5,7 @@ project(hello-metal)
 set(CMAKE_CXX_STANDARD 20)
 add_subdirectory(dependencies/glfw)
 
+# glcume
 
 add_executable(hello-metal 
     "src/metal.mm"
@@ -27,6 +28,7 @@ target_include_directories(hello-metal PUBLIC
     "include"
     "dependencies"
     "dependencies/imgui"
+	"dependencies/glm"
 	"dependencies/glfw/include"
 	"dependencies/metal-cpp/include"
 )

@@ -1,3 +1,5 @@
+#include <common.h>
+
 #define GLFW_INCLUDE_NONE
 #define GLFW_EXPOSE_NATIVE_COCOA
 #include <GLFW/glfw3.h>
@@ -28,6 +30,12 @@ static void quit(GLFWwindow* window, int key, int scancode, int action, int mods
 static void resize(GLFWwindow* window, int width, int height)
 {
     swapchain->setDrawableSize(CGSize{ (double)width, (double)height });
+}
+
+static void mouse(GLFWwindow* window, double x, double y)
+{
+    // should call imgui callback here
+    printf("%f %f\n", x, y);
 }
 
 MTL::Library* create_shader(MTL::Device* device)
@@ -113,7 +121,7 @@ MTL::ComputePipelineState* create_compute_pipeline(MTL::Device* device, MTL::Lib
 
 MTL::Buffer* create_buffer(MTL::Device* device)
 {
-    float positions[][2] =
+    vec2 positions[] =
     {
         { -0.8f,  -0.8f },
         {  0.0f,   0.8f },
@@ -149,6 +157,7 @@ int main(void)
 
     glfwSetKeyCallback(window, quit);
     glfwSetFramebufferSizeCallback(window, resize);
+    // glfwSetCursorPosCallback(window, mouse);
     MTL::ClearColor color{ 1, 0, 0, 1 };
 
     // Setup style
